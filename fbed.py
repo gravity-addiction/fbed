@@ -52,7 +52,7 @@ class EncodingTask:
         self.log_filename = os.path.splitext(self.out_filename)[0] + ".log"
         self.stderr = open(self.log_filename, "w", encoding="utf8")
         self.pipe_read, self.pipe_write = os.pipe()
-        self.pipe_read_file = os.fdopen(self.pipe_read)
+        self.pipe_read_file = os.fdopen(self.pipe_read, 'rb', 0)
 
         probe = ffmpeg.probe(filename)
         duration = float(probe["format"]["duration"])
@@ -95,13 +95,12 @@ class EncodingTask:
 
     def is_complete(self):
         encode_done = False
-        while not encode_done and not self.encode_error:
-            # TODO: Needs some non-blocking reading here in case the process dies while
-            # we're trying to read progress
-            l = self.pipe_read_file.readline()
-            if not l:
-                break
-
+        # while not encode_done and not self.encode_error:
+        # TODO: Needs some non-blocking reading here in case the process dies while
+        # we're trying to read progress
+        r = os.read(self.pipe_read, 8192).splitlines()
+        for l in r:
+            l = l.decode('utf-8')
             l = l.strip()
             key, val = l.split("=")
             val = val.strip()
@@ -111,14 +110,12 @@ class EncodingTask:
                 self.encode_stats[key] = out_time
             elif key == "fps":
                 self.encode_stats[key] = float(val)
+            elif not encode_done and key == "progress":
+                encode_done = val == "end"
             else:
                 self.encode_stats[key] = val
 
-            if l.startswith("progress="):
-                encode_done = l == "progress=end"
-                break
-
-        if not encode_done:
+        if not encode_done and self.encode_stats["out_time"]:
             speed = float(self.encode_stats["speed"][:-1])
             remaining_time = (self.duration - self.encode_stats["out_time"]) / speed
             self.encode_stats["estimate_remaining"] = remaining_time
